@@ -12,26 +12,19 @@ from telegram.ext import (
     filters,
 )
 
-from openai import AsyncOpenAI
-
-
 # ============================================================
 # SOZLAMALAR
 # ============================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID", "0")
 
 try:
     ADMIN_ID = int(ADMIN_ID)
-except ValueError:
+except:
     ADMIN_ID = 0
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
-
 DATABASE = "school.db"
-
 
 # ============================================================
 # LOG
@@ -44,25 +37,11 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-
-# ============================================================
-# OPENAI
-# ============================================================
-
-ai_client = None
-
-if OPENAI_API_KEY:
-    ai_client = AsyncOpenAI(
-        api_key=OPENAI_API_KEY
-    )
-
-
 # ============================================================
 # DATABASE
 # ============================================================
 
 def database():
-
     return sqlite3.connect(
         DATABASE,
         check_same_thread=False
@@ -70,7 +49,6 @@ def database():
 
 
 def create_database():
-
     conn = database()
     cursor = conn.cursor()
 
@@ -120,15 +98,11 @@ def create_database():
 # ============================================================
 
 def is_admin(user_id):
-
-    return (
-        ADMIN_ID != 0
-        and user_id == ADMIN_ID
-    )
+    return ADMIN_ID != 0 and user_id == ADMIN_ID
 
 
 # ============================================================
-# ASOSIY MENYU
+# KLAVIATURALAR
 # ============================================================
 
 def main_keyboard():
@@ -137,7 +111,7 @@ def main_keyboard():
         [
             ["📚 Dars jadvali", "📝 Uyga vazifa"],
             ["📢 E'lonlar", "🎉 Tadbirlar"],
-            ["🤖 AI yordamchi", "ℹ️ Yordam"],
+            ["🤖 Yordamchi", "ℹ️ Yordam"],
         ],
         resize_keyboard=True
     )
@@ -149,7 +123,7 @@ def admin_keyboard():
         [
             ["📚 Dars jadvali", "📝 Uyga vazifa"],
             ["📢 E'lonlar", "🎉 Tadbirlar"],
-            ["🤖 AI yordamchi", "⚙️ Admin"],
+            ["🤖 Yordamchi", "⚙️ Admin"],
             ["ℹ️ Yordam"],
         ],
         resize_keyboard=True
@@ -176,10 +150,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
 
-    if is_admin(user.id):
-        keyboard = admin_keyboard()
-    else:
-        keyboard = main_keyboard()
+    keyboard = (
+        admin_keyboard()
+        if is_admin(user.id)
+        else main_keyboard()
+    )
 
     await update.message.reply_text(
         f"🏫 <b>Maktab 57 botiga xush kelibsiz!</b>\n\n"
@@ -196,7 +171,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def schedule_menu(update, context):
 
-    context.user_data["state"] = "choose_schedule_grade"
+    context.user_data["state"] = "schedule_grade"
 
     keyboard = ReplyKeyboardMarkup(
         [
@@ -231,11 +206,20 @@ async def show_schedule(update, context):
         SELECT day, lesson, subject
         FROM schedules
         WHERE grade = ?
-        ORDER BY id
+        ORDER BY
+            CASE day
+                WHEN 'Dushanba' THEN 1
+                WHEN 'Seshanba' THEN 2
+                WHEN 'Chorshanba' THEN 3
+                WHEN 'Payshanba' THEN 4
+                WHEN 'Juma' THEN 5
+                WHEN 'Shanba' THEN 6
+                ELSE 7
+            END,
+            lesson
     """, (grade,))
 
     rows = cursor.fetchall()
-
     conn.close()
 
     if not rows:
@@ -268,10 +252,7 @@ async def show_schedule(update, context):
         result += f"📅 <b>{day}</b>\n"
 
         for lesson, subject in lessons:
-
-            result += (
-                f"{lesson}. {subject}\n"
-            )
+            result += f"{lesson}. {subject}\n"
 
         result += "\n"
 
@@ -290,7 +271,7 @@ async def show_schedule(update, context):
 
 async def homework_menu(update, context):
 
-    context.user_data["state"] = "choose_homework_grade"
+    context.user_data["state"] = "homework_grade"
 
     keyboard = ReplyKeyboardMarkup(
         [
@@ -329,7 +310,6 @@ async def show_homework(update, context):
     """, (grade,))
 
     rows = cursor.fetchall()
-
     conn.close()
 
     if not rows:
@@ -380,7 +360,6 @@ async def announcements(update, context):
     """)
 
     rows = cursor.fetchall()
-
     conn.close()
 
     if not rows:
@@ -425,7 +404,6 @@ async def events(update, context):
     """)
 
     rows = cursor.fetchall()
-
     conn.close()
 
     if not rows:
@@ -455,94 +433,69 @@ async def events(update, context):
 
 
 # ============================================================
-# AI
+# ODDIY YORDAMCHI
 # ============================================================
 
-AI_INSTRUCTIONS = """
-Sen Maktab 57 Telegram botining AI yordamchisisan.
+async def assistant(update, context):
 
-Foydalanuvchi o'zbek tilida yozsa, o'zbek tilida javob ber.
-
-Sen:
-- matematika
-- ona tili
-- adabiyot
-- tarix
-- geografiya
-- fizika
-- kimyo
-- informatika
-- ingliz tili
-
-va boshqa maktab fanlarida yordam berasan.
-
-Masalalarni kerak bo'lsa bosqichma-bosqich tushuntir.
-
-Javoblarni sodda, aniq va o'quvchiga tushunarli qil.
-
-Agar foydalanuvchi "faqat javob" desa,
-ortiqcha tushuntirish bermasdan javob ber.
-
-Agar ma'lumotni aniq bilmasang,
-to'qib chiqarmagin.
-
-Hurmatli va do'stona bo'l.
-"""
-
-
-async def ask_ai(question):
-
-    if not ai_client:
-
-        return (
-            "⚠️ AI hali ulanmagan.\n\n"
-            "Render → Environment Variables bo‘limida "
-            "OPENAI_API_KEY qo‘yilishi kerak."
-        )
-
-    try:
-
-        response = await ai_client.responses.create(
-            model=OPENAI_MODEL,
-            instructions=AI_INSTRUCTIONS,
-            input=question,
-            max_output_tokens=1500
-        )
-
-        answer = response.output_text
-
-        if not answer:
-
-            return "⚠️ AI javob qaytarmadi."
-
-        return answer
-
-    except Exception as error:
-
-        logger.exception(
-            "OpenAI xatosi: %s",
-            error
-        )
-
-        return (
-            "⚠️ AI bilan bog‘lanishda xatolik yuz berdi.\n\n"
-            "Bir ozdan keyin yana urinib ko‘ring."
-        )
-
-
-async def ai_menu(update, context):
-
-    context.user_data["state"] = "ai"
+    context.user_data["state"] = "assistant"
 
     await update.message.reply_text(
-        "🤖 <b>AI yordamchi</b>\n\n"
-        "Savolingizni yozing.\n\n"
+        "🤖 <b>Yordamchi</b>\n\n"
+        "Men oddiy savollarga javob beraman.\n\n"
         "Masalan:\n"
-        "🔹 25 × 16 nechiga teng?\n"
-        "🔹 Kvadrat tenglamani tushuntir.\n"
-        "🔹 Amir Temur haqida ma'lumot ber.\n"
-        "🔹 Ingliz tilidan yordam ber.\n\n"
+        "• salom\n"
+        "• maktab haqida\n"
+        "• dars jadvali\n"
+        "• uyga vazifa\n\n"
         "⬅️ Orqaga — asosiy menyuga qaytish.",
+        parse_mode="HTML",
+        reply_markup=back_keyboard()
+    )
+
+
+async def assistant_answer(update, context):
+
+    text = update.message.text.lower().strip()
+
+    if text in ["salom", "assalomu alaykum", "assalom"]:
+
+        answer = (
+            "👋 Va alaykum assalom!\n"
+            "🏫 Maktab 57 botiga xush kelibsiz!"
+        )
+
+    elif "maktab" in text:
+
+        answer = (
+            "🏫 <b>Maktab 57</b>\n\n"
+            "Bu bot orqali dars jadvali, "
+            "uyga vazifalar, e'lonlar va "
+            "tadbirlarni ko‘rishingiz mumkin."
+        )
+
+    elif "rahmat" in text:
+
+        answer = "😊 Arzimaydi!"
+
+    elif "kim" in text and "sen" in text:
+
+        answer = (
+            "🤖 Men Maktab 57 botining "
+            "oddiy yordamchisiman."
+        )
+
+    else:
+
+        answer = (
+            "🙂 Bu savolga hozircha tayyor "
+            "javobim yo‘q.\n\n"
+            "📚 Dars jadvali yoki boshqa "
+            "menyu tugmalaridan foydalaning."
+        )
+
+    await update.message.reply_text(
+        answer,
         parse_mode="HTML",
         reply_markup=back_keyboard()
     )
@@ -555,11 +508,9 @@ async def ai_menu(update, context):
 async def admin_menu(update, context):
 
     if not is_admin(update.effective_user.id):
-
         await update.message.reply_text(
             "⛔ Siz administrator emassiz."
         )
-
         return
 
     context.user_data["state"] = "admin"
@@ -585,7 +536,7 @@ async def admin_menu(update, context):
 
 
 # ============================================================
-# ADMIN - JADVAL QO'SHISH
+# ADMIN - JADVAL
 # ============================================================
 
 async def add_schedule(update, context):
@@ -597,9 +548,8 @@ async def add_schedule(update, context):
 
     await update.message.reply_text(
         "➕ <b>Dars qo‘shish</b>\n\n"
-        "Quyidagi formatda yozing:\n\n"
+        "Format:\n\n"
         "<code>11-sinf | Dushanba | 1 | Matematika</code>\n\n"
-        "Tartibi:\n"
         "Sinf | Kun | Dars raqami | Fan",
         parse_mode="HTML"
     )
@@ -650,11 +600,11 @@ async def save_schedule(update, context):
             reply_markup=admin_keyboard()
         )
 
-    except Exception:
+    except:
 
         await update.message.reply_text(
             "❌ Format xato.\n\n"
-            "To‘g‘ri misol:\n\n"
+            "Masalan:\n"
             "11-sinf | Dushanba | 1 | Matematika"
         )
 
@@ -673,7 +623,7 @@ async def add_homework(update, context):
     await update.message.reply_text(
         "➕ <b>Uyga vazifa qo‘shish</b>\n\n"
         "Format:\n\n"
-        "<code>11-sinf | Matematika | 12-misol, 13-misol</code>",
+        "<code>11-sinf | Matematika | 12-misol</code>",
         parse_mode="HTML"
     )
 
@@ -724,12 +674,12 @@ async def save_homework(update, context):
             reply_markup=admin_keyboard()
         )
 
-    except Exception:
+    except:
 
         await update.message.reply_text(
             "❌ Format xato.\n\n"
-            "Misol:\n\n"
-            "11-sinf | Matematika | 12-misol, 13-misol"
+            "Masalan:\n"
+            "11-sinf | Matematika | 12-misol"
         )
 
 
@@ -757,11 +707,9 @@ async def save_announcement(update, context):
     text = update.message.text.strip()
 
     if not text:
-
         await update.message.reply_text(
             "❌ E'lon bo‘sh bo‘lishi mumkin emas."
         )
-
         return
 
     conn = database()
@@ -853,11 +801,11 @@ async def save_event(update, context):
             reply_markup=admin_keyboard()
         )
 
-    except Exception:
+    except:
 
         await update.message.reply_text(
             "❌ Format xato.\n\n"
-            "Misol:\n\n"
+            "Masalan:\n"
             "Sport musobaqasi | 20-sentabr | "
             "Maktab hovlisida"
         )
@@ -898,14 +846,14 @@ async def clear_data(update, context):
     if not is_admin(update.effective_user.id):
         return
 
-    text = update.message.text
-
     tables = {
         "🗑 Jadval": "schedules",
         "🗑 Uyga vazifalar": "homework",
         "🗑 E'lonlar": "announcements",
         "🗑 Tadbirlar": "events"
     }
+
+    text = update.message.text
 
     if text not in tables:
         return
@@ -943,26 +891,20 @@ async def help_command(update, context):
     )
 
     await update.message.reply_text(
-        "ℹ️ <b>Maktab 57 bot yordamchisi</b>\n\n"
-        "📚 Dars jadvali\n"
-        "Sinf bo‘yicha darslarni ko‘rish.\n\n"
-        "📝 Uyga vazifa\n"
-        "Sinf bo‘yicha vazifalarni ko‘rish.\n\n"
-        "📢 E'lonlar\n"
-        "Maktab e'lonlarini ko‘rish.\n\n"
-        "🎉 Tadbirlar\n"
-        "Maktab tadbirlarini ko‘rish.\n\n"
-        "🤖 AI yordamchi\n"
-        "Fanlar bo‘yicha AI dan yordam olish.\n\n"
-        "⚙️ Admin\n"
-        "Faqat administrator uchun.",
+        "ℹ️ <b>Maktab 57 bot</b>\n\n"
+        "📚 Dars jadvali — sinflar bo‘yicha jadval\n"
+        "📝 Uyga vazifa — vazifalarni ko‘rish\n"
+        "📢 E'lonlar — maktab e'lonlari\n"
+        "🎉 Tadbirlar — tadbirlar ro‘yxati\n"
+        "🤖 Yordamchi — oddiy savollarga javob\n"
+        "⚙️ Admin — faqat admin uchun",
         parse_mode="HTML",
         reply_markup=keyboard
     )
 
 
 # ============================================================
-# ASOSIY TEXT HANDLER
+# ASOSIY HANDLER
 # ============================================================
 
 async def text_handler(update, context):
@@ -973,13 +915,9 @@ async def text_handler(update, context):
     text = update.message.text.strip()
     user_id = update.effective_user.id
 
-    state = context.user_data.get(
-        "state"
-    )
+    state = context.user_data.get("state")
 
-    # --------------------------------------------------------
     # ORQAGA
-    # --------------------------------------------------------
 
     if text == "⬅️ Orqaga":
 
@@ -999,221 +937,93 @@ async def text_handler(update, context):
 
         return
 
-    # --------------------------------------------------------
-    # ASOSIY TUGMALAR
-    # --------------------------------------------------------
+    # ASOSIY MENYU
 
     if text == "📚 Dars jadvali":
-
-        await schedule_menu(
-            update,
-            context
-        )
-
+        await schedule_menu(update, context)
         return
 
     if text == "📝 Uyga vazifa":
-
-        await homework_menu(
-            update,
-            context
-        )
-
+        await homework_menu(update, context)
         return
 
     if text == "📢 E'lonlar":
-
-        await announcements(
-            update,
-            context
-        )
-
+        await announcements(update, context)
         return
 
     if text == "🎉 Tadbirlar":
-
-        await events(
-            update,
-            context
-        )
-
+        await events(update, context)
         return
 
-    if text == "🤖 AI yordamchi":
-
-        await ai_menu(
-            update,
-            context
-        )
-
+    if text == "🤖 Yordamchi":
+        await assistant(update, context)
         return
 
     if text == "ℹ️ Yordam":
-
-        await help_command(
-            update,
-            context
-        )
-
+        await help_command(update, context)
         return
 
-    # --------------------------------------------------------
-    # ADMIN MENU
-    # --------------------------------------------------------
+    # ADMIN
 
     if text == "⚙️ Admin":
-
-        await admin_menu(
-            update,
-            context
-        )
-
+        await admin_menu(update, context)
         return
 
     if text == "➕ Jadval qo‘shish":
-
-        await add_schedule(
-            update,
-            context
-        )
-
+        await add_schedule(update, context)
         return
 
     if text == "➕ Uyga vazifa qo‘shish":
-
-        await add_homework(
-            update,
-            context
-        )
-
+        await add_homework(update, context)
         return
 
     if text == "➕ E'lon qo‘shish":
-
-        await add_announcement(
-            update,
-            context
-        )
-
+        await add_announcement(update, context)
         return
 
     if text == "➕ Tadbir qo‘shish":
-
-        await add_event(
-            update,
-            context
-        )
-
+        await add_event(update, context)
         return
 
     if text == "🗑 Ma'lumotlarni tozalash":
-
-        await clear_menu(
-            update,
-            context
-        )
-
+        await clear_menu(update, context)
         return
 
-    # --------------------------------------------------------
     # STATE
-    # --------------------------------------------------------
 
-    if state == "choose_schedule_grade":
-
-        await show_schedule(
-            update,
-            context
-        )
-
+    if state == "schedule_grade":
+        await show_schedule(update, context)
         return
 
-    if state == "choose_homework_grade":
-
-        await show_homework(
-            update,
-            context
-        )
-
+    if state == "homework_grade":
+        await show_homework(update, context)
         return
 
     if state == "add_schedule":
-
-        await save_schedule(
-            update,
-            context
-        )
-
+        await save_schedule(update, context)
         return
 
     if state == "add_homework":
-
-        await save_homework(
-            update,
-            context
-        )
-
+        await save_homework(update, context)
         return
 
     if state == "add_announcement":
-
-        await save_announcement(
-            update,
-            context
-        )
-
+        await save_announcement(update, context)
         return
 
     if state == "add_event":
-
-        await save_event(
-            update,
-            context
-        )
-
+        await save_event(update, context)
         return
 
     if state == "clear":
-
-        await clear_data(
-            update,
-            context
-        )
-
+        await clear_data(update, context)
         return
 
-    # --------------------------------------------------------
-    # AI
-    # --------------------------------------------------------
-
-    if state == "ai":
-
-        await update.message.reply_text(
-            "🤖 O‘ylayapman...",
-        )
-
-        answer = await ask_ai(text)
-
-        # Telegram 4096 belgidan katta xabarni qabul qilmaydi.
-        chunk_size = 3800
-
-        for start in range(
-            0,
-            len(answer),
-            chunk_size
-        ):
-
-            await update.message.reply_text(
-                answer[
-                    start:start + chunk_size
-                ]
-            )
-
+    if state == "assistant":
+        await assistant_answer(update, context)
         return
 
-    # --------------------------------------------------------
-    # TUSHUNILMAGAN BUYRUQ
-    # --------------------------------------------------------
+    # TUSHUNILMAGAN
 
     keyboard = (
         admin_keyboard()
@@ -1229,7 +1039,7 @@ async def text_handler(update, context):
 
 
 # ============================================================
-# ERROR HANDLER
+# ERROR
 # ============================================================
 
 async def error_handler(update, context):
@@ -1248,7 +1058,6 @@ async def error_handler(update, context):
 def main():
 
     if not BOT_TOKEN:
-
         raise RuntimeError(
             "BOT_TOKEN topilmadi!"
         )
@@ -1294,10 +1103,6 @@ def main():
         drop_pending_updates=True
     )
 
-
-# ============================================================
-# ISHGA TUSHIRISH
-# ============================================================
 
 if __name__ == "__main__":
     main()
