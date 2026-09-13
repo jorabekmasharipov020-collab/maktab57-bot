@@ -1,33 +1,19 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from openai import OpenAI
 
 
 # =========================
-# TOKENLAR
+# BOT TOKEN
 # =========================
 
 TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not TOKEN:
     raise ValueError("BOT_TOKEN Render Environment Variables'da topilmadi!")
-
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY Render Environment Variables'da topilmadi!")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 # =========================
@@ -101,151 +87,6 @@ async def class_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton(
-                "🤖 AI yordamchi",
-                callback_data="ai_start"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🌐 Kundalik.com",
-                url="https://kundalik.com"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔄 Sinfni almashtirish",
-                callback_data="change"
-            )
-        ]
-    ]
-
-    await query.edit_message_text(
-        f"✅ Siz {sinf}-sinfni tanladingiz!\n\n"
-        "Kerakli bo‘limni tanlang:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-# =========================
-# AI YORDAMCHI BOSHLASH
-# =========================
-
-async def ai_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.callback_query
-    await query.answer()
-
-    context.user_data["ai_mode"] = True
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "⬅️ Orqaga",
-                callback_data="ai_back"
-            )
-        ]
-    ]
-
-    await query.edit_message_text(
-        "🤖 AI YORDAMCHI\n\n"
-        "Savolingizni yozing.\n\n"
-        "Masalan:\n"
-        "🧮 2x + 5 = 15 ni yech\n"
-        "📚 Fotosintez nima?\n"
-        "🇬🇧 Ingliz tilidan yordam ber\n"
-        "🌍 O‘zbekiston tarixi haqida ayt",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-# =========================
-# AI JAVOBI
-# =========================
-
-async def ai_yordamchi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if not update.message or not update.message.text:
-        return
-
-    # AI rejimi yoqilmagan bo‘lsa, oddiy xabar sifatida javob bermaydi
-    if not context.user_data.get("ai_mode"):
-        return
-
-    savol = update.message.text
-
-    try:
-
-        await update.message.reply_text(
-            "🤖 AI o‘ylayapti..."
-        )
-
-        response = client.responses.create(
-            model="gpt-5.4-mini",
-            instructions=(
-                "Sen Maktab 57 maktab botining AI yordamchisisan. "
-                "O‘zbek tilida sodda, tushunarli va qisqa javob ber. "
-                "O‘quvchilarga matematika, fizika, kimyo, biologiya, "
-                "tarix, ona tili, adabiyot, ingliz tili va boshqa "
-                "maktab fanlarida yordam ber. "
-                "Masalalarda imkon qadar ishlanishini ham ko‘rsat. "
-                "Javoblarni o‘quvchi tushunadigan tilda yoz."
-            ),
-            input=savol
-        )
-
-        javob = response.output_text
-
-        if not javob:
-            javob = "❌ AI javob qaytara olmadi."
-
-        await update.message.reply_text(
-            "🤖 AI:\n\n" + javob
-        )
-
-    except Exception as e:
-
-        print("AI XATOSI:", e)
-
-        await update.message.reply_text(
-            "❌ AI bilan bog‘lanishda xatolik yuz berdi.\n\n"
-            "Keyinroq yana urinib ko‘ring."
-        )
-
-
-# =========================
-# AI DAN ORQAGA
-# =========================
-
-async def ai_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.callback_query
-    await query.answer()
-
-    context.user_data["ai_mode"] = False
-
-    sinf = context.user_data.get("sinf", "11")
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "📚 Dars jadvali",
-                callback_data=f"dars_{sinf}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🏆 To‘garaklar",
-                callback_data=f"togarak_{sinf}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🤖 AI yordamchi",
-                callback_data="ai_start"
-            )
-        ],
-        [
-            InlineKeyboardButton(
                 "🌐 Kundalik.com",
                 url="https://kundalik.com"
             )
@@ -275,8 +116,6 @@ async def dars_jadvali(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     sinf = query.data.replace("dars_", "")
-
-    context.user_data["sinf"] = sinf
 
     if sinf == "11":
 
@@ -379,7 +218,7 @@ JADVAL = {
 
 
 # =========================
-# HAFTA KUNI
+# HAFTA KUNI TANLANGANDA
 # =========================
 
 async def kun_tanlandi(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -424,8 +263,6 @@ async def togaraklar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sinf = query.data.replace("togarak_", "")
 
-    context.user_data["sinf"] = sinf
-
     keyboard = [
         [
             InlineKeyboardButton(
@@ -455,8 +292,6 @@ async def back_to_class(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sinf = query.data.replace("orqaga_", "")
 
-    context.user_data["sinf"] = sinf
-
     keyboard = [
         [
             InlineKeyboardButton(
@@ -468,12 +303,6 @@ async def back_to_class(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton(
                 "🏆 To‘garaklar",
                 callback_data=f"togarak_{sinf}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🤖 AI yordamchi",
-                callback_data="ai_start"
             )
         ],
         [
@@ -506,8 +335,6 @@ async def change_class(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    context.user_data["ai_mode"] = False
-
     await query.edit_message_text(
         "🏫 Sinfingizni tanlang:",
         reply_markup=InlineKeyboardMarkup(sinflar_menyusi())
@@ -522,8 +349,6 @@ async def home(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
     await query.answer()
-
-    context.user_data["ai_mode"] = False
 
     await query.edit_message_text(
         "🏫 Maktab 57 botiga xush kelibsiz!\n\n"
@@ -577,7 +402,6 @@ def main():
 
     app = Application.builder().token(TOKEN).build()
 
-    # START
     app.add_handler(
         CommandHandler(
             "start",
@@ -585,7 +409,6 @@ def main():
         )
     )
 
-    # SINFLAR
     app.add_handler(
         CallbackQueryHandler(
             class_selected,
@@ -593,23 +416,6 @@ def main():
         )
     )
 
-    # AI BOSHLASH
-    app.add_handler(
-        CallbackQueryHandler(
-            ai_start,
-            pattern=r"^ai_start$"
-        )
-    )
-
-    # AI ORQAGA
-    app.add_handler(
-        CallbackQueryHandler(
-            ai_back,
-            pattern=r"^ai_back$"
-        )
-    )
-
-    # DARS JADVALI
     app.add_handler(
         CallbackQueryHandler(
             dars_jadvali,
@@ -617,7 +423,6 @@ def main():
         )
     )
 
-    # HAFTA KUNLARI
     app.add_handler(
         CallbackQueryHandler(
             kun_tanlandi,
@@ -625,7 +430,6 @@ def main():
         )
     )
 
-    # TO‘GARAKLAR
     app.add_handler(
         CallbackQueryHandler(
             togaraklar,
@@ -633,7 +437,6 @@ def main():
         )
     )
 
-    # ORQAGA
     app.add_handler(
         CallbackQueryHandler(
             back_to_class,
@@ -641,7 +444,6 @@ def main():
         )
     )
 
-    # SINF ALMASHTIRISH
     app.add_handler(
         CallbackQueryHandler(
             change_class,
@@ -649,19 +451,10 @@ def main():
         )
     )
 
-    # BOSH MENYU
     app.add_handler(
         CallbackQueryHandler(
             home,
             pattern=r"^home$"
-        )
-    )
-
-    # AI SAVOLLARI
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            ai_yordamchi
         )
     )
 
