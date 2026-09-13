@@ -1,13 +1,9 @@
 import os
-import sqlite3
 import logging
+import sqlite3
 from datetime import datetime
 
-from telegram import (
-    Update,
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
-)
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -19,57 +15,66 @@ from telegram.ext import (
 from openai import AsyncOpenAI
 
 
-# =========================================================
+# ============================================================
 # SOZLAMALAR
-# =========================================================
+# ============================================================
 
-TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_ID = os.getenv("ADMIN_ID", "0")
 
-# Render'da xohlasang OPENAI_MODEL ni o'zgartirishing mumkin.
-MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+try:
+    ADMIN_ID = int(ADMIN_ID)
+except ValueError:
+    ADMIN_ID = 0
 
-DB_NAME = "school_bot.db"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+
+DATABASE = "school.db"
 
 
-# =========================================================
+# ============================================================
 # LOG
-# =========================================================
+# ============================================================
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
 logger = logging.getLogger(__name__)
 
 
-# =========================================================
+# ============================================================
 # OPENAI
-# =========================================================
+# ============================================================
 
 ai_client = None
 
 if OPENAI_API_KEY:
-    ai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    ai_client = AsyncOpenAI(
+        api_key=OPENAI_API_KEY
+    )
 
 
-# =========================================================
+# ============================================================
 # DATABASE
-# =========================================================
+# ============================================================
 
-def get_db():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
+def database():
+
+    return sqlite3.connect(
+        DATABASE,
+        check_same_thread=False
+    )
 
 
-def init_db():
-    conn = get_db()
-    cur = conn.cursor()
+def create_database():
 
-    cur.execute("""
+    conn = database()
+    cursor = conn.cursor()
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS schedules (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             grade TEXT NOT NULL,
@@ -79,17 +84,17 @@ def init_db():
         )
     """)
 
-    cur.execute("""
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS homework (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             grade TEXT NOT NULL,
             subject TEXT NOT NULL,
-            text TEXT NOT NULL,
+            task TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
     """)
 
-    cur.execute("""
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS announcements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             text TEXT NOT NULL,
@@ -97,11 +102,11 @@ def init_db():
         )
     """)
 
-    cur.execute("""
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
-            date TEXT NOT NULL,
+            event_date TEXT NOT NULL,
             description TEXT NOT NULL
         )
     """)
@@ -110,22 +115,36 @@ def init_db():
     conn.close()
 
 
-# =========================================================
-# KLAVIATURA
-# =========================================================
+# ============================================================
+# ADMIN
+# ============================================================
 
-def main_menu():
+def is_admin(user_id):
+
+    return (
+        ADMIN_ID != 0
+        and user_id == ADMIN_ID
+    )
+
+
+# ============================================================
+# ASOSIY MENYU
+# ============================================================
+
+def main_keyboard():
+
     return ReplyKeyboardMarkup(
         [
             ["📚 Dars jadvali", "📝 Uyga vazifa"],
             ["📢 E'lonlar", "🎉 Tadbirlar"],
             ["🤖 AI yordamchi", "ℹ️ Yordam"],
         ],
-        resize_keyboard=True,
+        resize_keyboard=True
     )
 
 
-def admin_menu():
+def admin_keyboard():
+
     return ReplyKeyboardMarkup(
         [
             ["📚 Dars jadvali", "📝 Uyga vazifa"],
@@ -133,373 +152,417 @@ def admin_menu():
             ["🤖 AI yordamchi", "⚙️ Admin"],
             ["ℹ️ Yordam"],
         ],
-        resize_keyboard=True,
+        resize_keyboard=True
     )
 
 
-def is_admin(user_id):
-    return user_id == ADMIN_ID and ADMIN_ID != 0
+def back_keyboard():
+
+    return ReplyKeyboardMarkup(
+        [
+            ["⬅️ Orqaga"]
+        ],
+        resize_keyboard=True
+    )
 
 
-# =========================================================
+# ============================================================
 # START
-# =========================================================
+# ============================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    context.user_data.clear()
 
     user = update.effective_user
 
     if is_admin(user.id):
-        keyboard = admin_menu()
+        keyboard = admin_keyboard()
     else:
-        keyboard = main_menu()
-
-    text = (
-        "🏫 Maktab 57 botiga xush kelibsiz!\n\n"
-        f"👤 Salom, {user.first_name}!\n\n"
-        "Kerakli bo‘limni tanlang:"
-    )
+        keyboard = main_keyboard()
 
     await update.message.reply_text(
-        text,
+        f"🏫 <b>Maktab 57 botiga xush kelibsiz!</b>\n\n"
+        f"👤 Salom, {user.first_name}!\n\n"
+        f"Kerakli bo‘limni tanlang 👇",
+        parse_mode="HTML",
         reply_markup=keyboard
     )
 
 
-# =========================================================
+# ============================================================
 # DARS JADVALI
-# =========================================================
+# ============================================================
 
-async def show_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def schedule_menu(update, context):
 
-    grades = [
-        ["1-sinf", "2-sinf", "3-sinf"],
-        ["4-sinf", "5-sinf", "6-sinf"],
-        ["7-sinf", "8-sinf", "9-sinf"],
-        ["10-sinf", "11-sinf"],
-    ]
+    context.user_data["state"] = "choose_schedule_grade"
 
     keyboard = ReplyKeyboardMarkup(
-        grades + [["⬅️ Orqaga"]],
+        [
+            ["1-sinf", "2-sinf", "3-sinf"],
+            ["4-sinf", "5-sinf", "6-sinf"],
+            ["7-sinf", "8-sinf", "9-sinf"],
+            ["10-sinf", "11-sinf"],
+            ["⬅️ Orqaga"]
+        ],
         resize_keyboard=True
     )
 
-    context.user_data["mode"] = "schedule_grade"
-
     await update.message.reply_text(
-        "📚 Sinfni tanlang:",
+        "📚 <b>Dars jadvali</b>\n\n"
+        "Sinfni tanlang:",
+        parse_mode="HTML",
         reply_markup=keyboard
     )
 
 
-async def show_grade_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_schedule(update, context):
 
     grade = update.message.text
 
     if not grade.endswith("-sinf"):
         return
 
-    conn = get_db()
-    cur = conn.cursor()
+    conn = database()
+    cursor = conn.cursor()
 
-    cur.execute(
-        """
+    cursor.execute("""
         SELECT day, lesson, subject
         FROM schedules
         WHERE grade = ?
-        ORDER BY
-            CASE day
-                WHEN 'Dushanba' THEN 1
-                WHEN 'Seshanba' THEN 2
-                WHEN 'Chorshanba' THEN 3
-                WHEN 'Payshanba' THEN 4
-                WHEN 'Juma' THEN 5
-                WHEN 'Shanba' THEN 6
-                ELSE 7
-            END,
-            lesson
-        """,
-        (grade,)
-    )
+        ORDER BY id
+    """, (grade,))
 
-    rows = cur.fetchall()
+    rows = cursor.fetchall()
+
     conn.close()
 
     if not rows:
+
         await update.message.reply_text(
-            f"📚 {grade} uchun dars jadvali hali kiritilmagan."
+            f"📚 <b>{grade}</b>\n\n"
+            f"❌ Hozircha dars jadvali kiritilmagan.",
+            parse_mode="HTML",
+            reply_markup=main_keyboard()
         )
+
+        context.user_data.clear()
         return
+
+    days = {}
+
+    for day, lesson, subject in rows:
+
+        if day not in days:
+            days[day] = []
+
+        days[day].append(
+            (lesson, subject)
+        )
 
     result = f"📚 <b>{grade} dars jadvali</b>\n\n"
 
-    current_day = None
+    for day, lessons in days.items():
 
-    for row in rows:
+        result += f"📅 <b>{day}</b>\n"
 
-        if row["day"] != current_day:
-            current_day = row["day"]
-            result += f"\n📅 <b>{current_day}</b>\n"
+        for lesson, subject in lessons:
 
-        result += (
-            f"{row['lesson']}. {row['subject']}\n"
-        )
+            result += (
+                f"{lesson}. {subject}\n"
+            )
+
+        result += "\n"
 
     await update.message.reply_text(
         result,
         parse_mode="HTML",
-        reply_markup=main_menu()
+        reply_markup=main_keyboard()
     )
 
     context.user_data.clear()
 
 
-# =========================================================
+# ============================================================
 # UYGA VAZIFA
-# =========================================================
+# ============================================================
 
-async def show_homework(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def homework_menu(update, context):
 
-    grades = [
-        ["1-sinf", "2-sinf", "3-sinf"],
-        ["4-sinf", "5-sinf", "6-sinf"],
-        ["7-sinf", "8-sinf", "9-sinf"],
-        ["10-sinf", "11-sinf"],
-    ]
+    context.user_data["state"] = "choose_homework_grade"
 
     keyboard = ReplyKeyboardMarkup(
-        grades + [["⬅️ Orqaga"]],
+        [
+            ["1-sinf", "2-sinf", "3-sinf"],
+            ["4-sinf", "5-sinf", "6-sinf"],
+            ["7-sinf", "8-sinf", "9-sinf"],
+            ["10-sinf", "11-sinf"],
+            ["⬅️ Orqaga"]
+        ],
         resize_keyboard=True
     )
 
-    context.user_data["mode"] = "homework_grade"
-
     await update.message.reply_text(
-        "📝 Sinfni tanlang:",
+        "📝 <b>Uyga vazifa</b>\n\n"
+        "Sinfni tanlang:",
+        parse_mode="HTML",
         reply_markup=keyboard
     )
 
 
-async def show_grade_homework(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_homework(update, context):
 
     grade = update.message.text
 
     if not grade.endswith("-sinf"):
         return
 
-    conn = get_db()
-    cur = conn.cursor()
+    conn = database()
+    cursor = conn.cursor()
 
-    cur.execute(
-        """
-        SELECT subject, text, created_at
+    cursor.execute("""
+        SELECT subject, task, created_at
         FROM homework
         WHERE grade = ?
         ORDER BY id DESC
-        """,
-        (grade,)
-    )
+    """, (grade,))
 
-    rows = cur.fetchall()
+    rows = cursor.fetchall()
+
     conn.close()
 
     if not rows:
+
         await update.message.reply_text(
-            f"📝 {grade} uchun uyga vazifa yo‘q."
+            f"📝 <b>{grade}</b>\n\n"
+            f"❌ Hozircha uyga vazifa yo‘q.",
+            parse_mode="HTML",
+            reply_markup=main_keyboard()
         )
+
+        context.user_data.clear()
         return
 
     result = f"📝 <b>{grade} uyga vazifalari</b>\n\n"
 
-    for row in rows:
+    for subject, task, created_at in rows:
+
         result += (
-            f"📖 <b>{row['subject']}</b>\n"
-            f"{row['text']}\n\n"
+            f"📖 <b>{subject}</b>\n"
+            f"{task}\n"
+            f"🕐 {created_at}\n\n"
         )
 
     await update.message.reply_text(
         result,
         parse_mode="HTML",
-        reply_markup=main_menu()
+        reply_markup=main_keyboard()
     )
 
     context.user_data.clear()
 
 
-# =========================================================
+# ============================================================
 # E'LONLAR
-# =========================================================
+# ============================================================
 
-async def show_announcements(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def announcements(update, context):
 
-    conn = get_db()
-    cur = conn.cursor()
+    conn = database()
+    cursor = conn.cursor()
 
-    cur.execute(
-        """
+    cursor.execute("""
         SELECT text, created_at
         FROM announcements
         ORDER BY id DESC
-        LIMIT 10
-        """
-    )
+        LIMIT 15
+    """)
 
-    rows = cur.fetchall()
+    rows = cursor.fetchall()
+
     conn.close()
 
     if not rows:
+
         await update.message.reply_text(
             "📢 Hozircha e'lonlar yo‘q.",
-            reply_markup=main_menu()
+            reply_markup=main_keyboard()
         )
+
         return
 
-    result = "📢 <b>So‘nggi e'lonlar</b>\n\n"
+    result = "📢 <b>E'lonlar</b>\n\n"
 
-    for row in rows:
+    for text, created_at in rows:
+
         result += (
-            f"🔹 {row['text']}\n"
-            f"🕐 {row['created_at']}\n\n"
+            f"🔹 {text}\n"
+            f"🕐 {created_at}\n\n"
         )
 
     await update.message.reply_text(
         result,
         parse_mode="HTML",
-        reply_markup=main_menu()
+        reply_markup=main_keyboard()
     )
 
 
-# =========================================================
+# ============================================================
 # TADBIRLAR
-# =========================================================
+# ============================================================
 
-async def show_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def events(update, context):
 
-    conn = get_db()
-    cur = conn.cursor()
+    conn = database()
+    cursor = conn.cursor()
 
-    cur.execute(
-        """
-        SELECT title, date, description
+    cursor.execute("""
+        SELECT title, event_date, description
         FROM events
         ORDER BY id DESC
-        LIMIT 10
-        """
-    )
+        LIMIT 15
+    """)
 
-    rows = cur.fetchall()
+    rows = cursor.fetchall()
+
     conn.close()
 
     if not rows:
+
         await update.message.reply_text(
             "🎉 Hozircha tadbirlar yo‘q.",
-            reply_markup=main_menu()
+            reply_markup=main_keyboard()
         )
+
         return
 
     result = "🎉 <b>Tadbirlar</b>\n\n"
 
-    for row in rows:
+    for title, event_date, description in rows:
+
         result += (
-            f"🎯 <b>{row['title']}</b>\n"
-            f"📅 {row['date']}\n"
-            f"ℹ️ {row['description']}\n\n"
+            f"🎯 <b>{title}</b>\n"
+            f"📅 {event_date}\n"
+            f"ℹ️ {description}\n\n"
         )
 
     await update.message.reply_text(
         result,
         parse_mode="HTML",
-        reply_markup=main_menu()
+        reply_markup=main_keyboard()
     )
 
 
-# =========================================================
+# ============================================================
 # AI
-# =========================================================
+# ============================================================
 
 AI_INSTRUCTIONS = """
 Sen Maktab 57 Telegram botining AI yordamchisisan.
 
-Vazifang:
-- O'quvchilarga darslarni tushuntirish.
-- Matematika, ona tili, tarix, fizika va boshqa fanlardan yordam berish.
-- Uy vazifasini tushuntirish.
-- Masalalarni bosqichma-bosqich yechish.
-- O'zbek tilida sodda va tushunarli javob berish.
-- Agar foydalanuvchi qisqa javob so'rasa, qisqa javob berish.
-- Bilmagan ma'lumotni to'qib chiqarmaslik.
-- O'quvchini mustaqil o'rganishga yordam berish.
-- Hurmatli va do'stona ohangda gapirish.
+Foydalanuvchi o'zbek tilida yozsa, o'zbek tilida javob ber.
 
-Sen maktab botining yordamchisisan.
+Sen:
+- matematika
+- ona tili
+- adabiyot
+- tarix
+- geografiya
+- fizika
+- kimyo
+- informatika
+- ingliz tili
+
+va boshqa maktab fanlarida yordam berasan.
+
+Masalalarni kerak bo'lsa bosqichma-bosqich tushuntir.
+
+Javoblarni sodda, aniq va o'quvchiga tushunarli qil.
+
+Agar foydalanuvchi "faqat javob" desa,
+ortiqcha tushuntirish bermasdan javob ber.
+
+Agar ma'lumotni aniq bilmasang,
+to'qib chiqarmagin.
+
+Hurmatli va do'stona bo'l.
 """
 
 
 async def ask_ai(question):
 
     if not ai_client:
+
         return (
-            "⚠️ AI hozir ulanmagan.\n\n"
-            "Admin Render'da OPENAI_API_KEY ni "
-            "Environment Variables bo‘limiga qo‘yishi kerak."
+            "⚠️ AI hali ulanmagan.\n\n"
+            "Render → Environment Variables bo‘limida "
+            "OPENAI_API_KEY qo‘yilishi kerak."
         )
 
     try:
 
         response = await ai_client.responses.create(
-            model=MODEL,
+            model=OPENAI_MODEL,
             instructions=AI_INSTRUCTIONS,
             input=question,
-            max_output_tokens=1200,
+            max_output_tokens=1500
         )
 
         answer = response.output_text
 
         if not answer:
+
             return "⚠️ AI javob qaytarmadi."
 
         return answer
 
-    except Exception as e:
+    except Exception as error:
 
-        logger.exception("AI xatosi")
+        logger.exception(
+            "OpenAI xatosi: %s",
+            error
+        )
 
         return (
-            "⚠️ AI bilan bog‘lanishda xatolik yuz berdi.\n"
-            "Bir ozdan keyin qayta urinib ko‘ring."
+            "⚠️ AI bilan bog‘lanishda xatolik yuz berdi.\n\n"
+            "Bir ozdan keyin yana urinib ko‘ring."
         )
 
 
-async def ai_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ai_menu(update, context):
 
-    context.user_data["mode"] = "ai"
+    context.user_data["state"] = "ai"
 
     await update.message.reply_text(
-        "🤖 AI yordamchi yoqildi!\n\n"
-        "Savolingizni yozing.\n"
+        "🤖 <b>AI yordamchi</b>\n\n"
+        "Savolingizni yozing.\n\n"
         "Masalan:\n"
-        "• Kvadrat tenglamani tushuntir\n"
-        "• Amir Temur haqida ma'lumot ber\n"
-        "• 25 × 16 ni hisobla\n\n"
-        "⬅️ Orqaga — menyuga qaytish",
-        reply_markup=ReplyKeyboardMarkup(
-            [["⬅️ Orqaga"]],
-            resize_keyboard=True
-        )
+        "🔹 25 × 16 nechiga teng?\n"
+        "🔹 Kvadrat tenglamani tushuntir.\n"
+        "🔹 Amir Temur haqida ma'lumot ber.\n"
+        "🔹 Ingliz tilidan yordam ber.\n\n"
+        "⬅️ Orqaga — asosiy menyuga qaytish.",
+        parse_mode="HTML",
+        reply_markup=back_keyboard()
     )
 
 
-# =========================================================
-# ADMIN MENU
-# =========================================================
+# ============================================================
+# ADMIN PANEL
+# ============================================================
 
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_menu(update, context):
 
     if not is_admin(update.effective_user.id):
+
         await update.message.reply_text(
-            "⛔ Bu bo‘lim faqat administrator uchun."
+            "⛔ Siz administrator emassiz."
         )
+
         return
+
+    context.user_data["state"] = "admin"
 
     keyboard = ReplyKeyboardMarkup(
         [
@@ -508,34 +571,32 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ["➕ E'lon qo‘shish"],
             ["➕ Tadbir qo‘shish"],
             ["🗑 Ma'lumotlarni tozalash"],
-            ["⬅️ Orqaga"],
+            ["⬅️ Orqaga"]
         ],
         resize_keyboard=True
     )
 
-    context.user_data["mode"] = "admin"
-
     await update.message.reply_text(
-        "⚙️ <b>Admin panel</b>\n\n"
+        "⚙️ <b>Administrator paneli</b>\n\n"
         "Kerakli amalni tanlang:",
         parse_mode="HTML",
         reply_markup=keyboard
     )
 
 
-# =========================================================
-# ADMIN - JADVAL
-# =========================================================
+# ============================================================
+# ADMIN - JADVAL QO'SHISH
+# ============================================================
 
-async def add_schedule_start(update, context):
+async def add_schedule(update, context):
 
     if not is_admin(update.effective_user.id):
         return
 
-    context.user_data["mode"] = "add_schedule"
+    context.user_data["state"] = "add_schedule"
 
     await update.message.reply_text(
-        "📚 Jadval qo‘shish.\n\n"
+        "➕ <b>Dars qo‘shish</b>\n\n"
         "Quyidagi formatda yozing:\n\n"
         "<code>11-sinf | Dushanba | 1 | Matematika</code>\n\n"
         "Tartibi:\n"
@@ -551,26 +612,32 @@ async def save_schedule(update, context):
 
     try:
 
-        parts = [x.strip() for x in update.message.text.split("|")]
+        parts = [
+            x.strip()
+            for x in update.message.text.split("|")
+        ]
 
         if len(parts) != 4:
             raise ValueError
 
-        grade, day, lesson, subject = parts
+        grade = parts[0]
+        day = parts[1]
+        lesson = int(parts[2])
+        subject = parts[3]
 
-        lesson = int(lesson)
+        conn = database()
+        cursor = conn.cursor()
 
-        conn = get_db()
-        cur = conn.cursor()
-
-        cur.execute(
-            """
+        cursor.execute("""
             INSERT INTO schedules
             (grade, day, lesson, subject)
             VALUES (?, ?, ?, ?)
-            """,
-            (grade, day, lesson, subject)
-        )
+        """, (
+            grade,
+            day,
+            lesson,
+            subject
+        ))
 
         conn.commit()
         conn.close()
@@ -578,32 +645,33 @@ async def save_schedule(update, context):
         context.user_data.clear()
 
         await update.message.reply_text(
-            "✅ Dars jadvali qo‘shildi!",
-            reply_markup=admin_menu()
+            "✅ <b>Dars jadvali qo‘shildi!</b>",
+            parse_mode="HTML",
+            reply_markup=admin_keyboard()
         )
 
     except Exception:
 
         await update.message.reply_text(
             "❌ Format xato.\n\n"
-            "Masalan:\n"
+            "To‘g‘ri misol:\n\n"
             "11-sinf | Dushanba | 1 | Matematika"
         )
 
 
-# =========================================================
+# ============================================================
 # ADMIN - UYGA VAZIFA
-# =========================================================
+# ============================================================
 
-async def add_homework_start(update, context):
+async def add_homework(update, context):
 
     if not is_admin(update.effective_user.id):
         return
 
-    context.user_data["mode"] = "add_homework"
+    context.user_data["state"] = "add_homework"
 
     await update.message.reply_text(
-        "📝 Uyga vazifa qo‘shish.\n\n"
+        "➕ <b>Uyga vazifa qo‘shish</b>\n\n"
         "Format:\n\n"
         "<code>11-sinf | Matematika | 12-misol, 13-misol</code>",
         parse_mode="HTML"
@@ -617,29 +685,33 @@ async def save_homework(update, context):
 
     try:
 
-        parts = [x.strip() for x in update.message.text.split("|")]
+        parts = [
+            x.strip()
+            for x in update.message.text.split("|")
+        ]
 
         if len(parts) != 3:
             raise ValueError
 
-        grade, subject, text = parts
+        grade = parts[0]
+        subject = parts[1]
+        task = parts[2]
 
-        conn = get_db()
-        cur = conn.cursor()
+        conn = database()
+        cursor = conn.cursor()
 
-        cur.execute(
-            """
+        cursor.execute("""
             INSERT INTO homework
-            (grade, subject, text, created_at)
+            (grade, subject, task, created_at)
             VALUES (?, ?, ?, ?)
-            """,
-            (
-                grade,
-                subject,
-                text,
-                datetime.now().strftime("%Y-%m-%d %H:%M")
+        """, (
+            grade,
+            subject,
+            task,
+            datetime.now().strftime(
+                "%Y-%m-%d %H:%M"
             )
-        )
+        ))
 
         conn.commit()
         conn.close()
@@ -647,29 +719,30 @@ async def save_homework(update, context):
         context.user_data.clear()
 
         await update.message.reply_text(
-            "✅ Uyga vazifa qo‘shildi!",
-            reply_markup=admin_menu()
+            "✅ <b>Uyga vazifa qo‘shildi!</b>",
+            parse_mode="HTML",
+            reply_markup=admin_keyboard()
         )
 
     except Exception:
 
         await update.message.reply_text(
             "❌ Format xato.\n\n"
-            "Masalan:\n"
+            "Misol:\n\n"
             "11-sinf | Matematika | 12-misol, 13-misol"
         )
 
 
-# =========================================================
+# ============================================================
 # ADMIN - E'LON
-# =========================================================
+# ============================================================
 
-async def add_announcement_start(update, context):
+async def add_announcement(update, context):
 
     if not is_admin(update.effective_user.id):
         return
 
-    context.user_data["mode"] = "add_announcement"
+    context.user_data["state"] = "add_announcement"
 
     await update.message.reply_text(
         "📢 E'lon matnini yuboring:"
@@ -681,22 +754,29 @@ async def save_announcement(update, context):
     if not is_admin(update.effective_user.id):
         return
 
-    text = update.message.text
+    text = update.message.text.strip()
 
-    conn = get_db()
-    cur = conn.cursor()
+    if not text:
 
-    cur.execute(
-        """
+        await update.message.reply_text(
+            "❌ E'lon bo‘sh bo‘lishi mumkin emas."
+        )
+
+        return
+
+    conn = database()
+    cursor = conn.cursor()
+
+    cursor.execute("""
         INSERT INTO announcements
         (text, created_at)
         VALUES (?, ?)
-        """,
-        (
-            text,
-            datetime.now().strftime("%Y-%m-%d %H:%M")
+    """, (
+        text,
+        datetime.now().strftime(
+            "%Y-%m-%d %H:%M"
         )
-    )
+    ))
 
     conn.commit()
     conn.close()
@@ -704,26 +784,28 @@ async def save_announcement(update, context):
     context.user_data.clear()
 
     await update.message.reply_text(
-        "✅ E'lon qo‘shildi!",
-        reply_markup=admin_menu()
+        "✅ <b>E'lon qo‘shildi!</b>",
+        parse_mode="HTML",
+        reply_markup=admin_keyboard()
     )
 
 
-# =========================================================
+# ============================================================
 # ADMIN - TADBIR
-# =========================================================
+# ============================================================
 
-async def add_event_start(update, context):
+async def add_event(update, context):
 
     if not is_admin(update.effective_user.id):
         return
 
-    context.user_data["mode"] = "add_event"
+    context.user_data["state"] = "add_event"
 
     await update.message.reply_text(
-        "🎉 Tadbir qo‘shish.\n\n"
+        "🎉 <b>Tadbir qo‘shish</b>\n\n"
         "Format:\n\n"
-        "<code>Sport musobaqasi | 20-sentabr | Maktab hovlisida</code>",
+        "<code>Sport musobaqasi | 20-sentabr | "
+        "Maktab hovlisida</code>",
         parse_mode="HTML"
     )
 
@@ -735,24 +817,30 @@ async def save_event(update, context):
 
     try:
 
-        parts = [x.strip() for x in update.message.text.split("|")]
+        parts = [
+            x.strip()
+            for x in update.message.text.split("|")
+        ]
 
         if len(parts) != 3:
             raise ValueError
 
-        title, date, description = parts
+        title = parts[0]
+        event_date = parts[1]
+        description = parts[2]
 
-        conn = get_db()
-        cur = conn.cursor()
+        conn = database()
+        cursor = conn.cursor()
 
-        cur.execute(
-            """
+        cursor.execute("""
             INSERT INTO events
-            (title, date, description)
+            (title, event_date, description)
             VALUES (?, ?, ?)
-            """,
-            (title, date, description)
-        )
+        """, (
+            title,
+            event_date,
+            description
+        ))
 
         conn.commit()
         conn.close()
@@ -760,75 +848,76 @@ async def save_event(update, context):
         context.user_data.clear()
 
         await update.message.reply_text(
-            "✅ Tadbir qo‘shildi!",
-            reply_markup=admin_menu()
+            "✅ <b>Tadbir qo‘shildi!</b>",
+            parse_mode="HTML",
+            reply_markup=admin_keyboard()
         )
 
     except Exception:
 
         await update.message.reply_text(
             "❌ Format xato.\n\n"
-            "Masalan:\n"
-            "Sport musobaqasi | 20-sentabr | Maktab hovlisida"
+            "Misol:\n\n"
+            "Sport musobaqasi | 20-sentabr | "
+            "Maktab hovlisida"
         )
 
 
-# =========================================================
-# TOZALASH
-# =========================================================
+# ============================================================
+# ADMIN - TOZALASH
+# ============================================================
+
+async def clear_menu(update, context):
+
+    if not is_admin(update.effective_user.id):
+        return
+
+    context.user_data["state"] = "clear"
+
+    keyboard = ReplyKeyboardMarkup(
+        [
+            ["🗑 Jadval"],
+            ["🗑 Uyga vazifalar"],
+            ["🗑 E'lonlar"],
+            ["🗑 Tadbirlar"],
+            ["⬅️ Orqaga"]
+        ],
+        resize_keyboard=True
+    )
+
+    await update.message.reply_text(
+        "🗑 <b>Ma'lumotlarni tozalash</b>\n\n"
+        "Qaysi bo‘limni tozalash kerak?",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
 
 async def clear_data(update, context):
 
     if not is_admin(update.effective_user.id):
         return
 
-    keyboard = ReplyKeyboardMarkup(
-        [
-            ["🗑 Jadvalni tozalash"],
-            ["🗑 Uyga vazifani tozalash"],
-            ["🗑 E'lonlarni tozalash"],
-            ["🗑 Tadbirlarni tozalash"],
-            ["⬅️ Orqaga"],
-        ],
-        resize_keyboard=True
-    )
-
-    context.user_data["mode"] = "clear_menu"
-
-    await update.message.reply_text(
-        "🗑 Qaysi ma'lumotni tozalaymiz?",
-        reply_markup=keyboard
-    )
-
-
-async def clear_selected(update, context):
-
-    if not is_admin(update.effective_user.id):
-        return
-
     text = update.message.text
 
-    table = None
+    tables = {
+        "🗑 Jadval": "schedules",
+        "🗑 Uyga vazifalar": "homework",
+        "🗑 E'lonlar": "announcements",
+        "🗑 Tadbirlar": "events"
+    }
 
-    if text == "🗑 Jadvalni tozalash":
-        table = "schedules"
-
-    elif text == "🗑 Uyga vazifani tozalash":
-        table = "homework"
-
-    elif text == "🗑 E'lonlarni tozalash":
-        table = "announcements"
-
-    elif text == "🗑 Tadbirlarni tozalash":
-        table = "events"
-
-    if not table:
+    if text not in tables:
         return
 
-    conn = get_db()
-    cur = conn.cursor()
+    table = tables[text]
 
-    cur.execute(f"DELETE FROM {table}")
+    conn = database()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        f"DELETE FROM {table}"
+    )
 
     conn.commit()
     conn.close()
@@ -837,277 +926,353 @@ async def clear_selected(update, context):
 
     await update.message.reply_text(
         "✅ Ma'lumotlar tozalandi.",
-        reply_markup=admin_menu()
+        reply_markup=admin_keyboard()
     )
 
 
-# =========================================================
+# ============================================================
 # YORDAM
-# =========================================================
+# ============================================================
 
 async def help_command(update, context):
 
+    keyboard = (
+        admin_keyboard()
+        if is_admin(update.effective_user.id)
+        else main_keyboard()
+    )
+
     await update.message.reply_text(
-        "ℹ️ <b>Maktab 57 bot</b>\n\n"
-        "📚 Dars jadvali — sinflar jadvali\n"
-        "📝 Uyga vazifa — berilgan vazifalar\n"
-        "📢 E'lonlar — maktab yangiliklari\n"
-        "🎉 Tadbirlar — tadbirlar ro‘yxati\n"
-        "🤖 AI yordamchi — savollarga AI javob beradi\n\n"
-        "Muammo bo‘lsa administratorga murojaat qiling.",
+        "ℹ️ <b>Maktab 57 bot yordamchisi</b>\n\n"
+        "📚 Dars jadvali\n"
+        "Sinf bo‘yicha darslarni ko‘rish.\n\n"
+        "📝 Uyga vazifa\n"
+        "Sinf bo‘yicha vazifalarni ko‘rish.\n\n"
+        "📢 E'lonlar\n"
+        "Maktab e'lonlarini ko‘rish.\n\n"
+        "🎉 Tadbirlar\n"
+        "Maktab tadbirlarini ko‘rish.\n\n"
+        "🤖 AI yordamchi\n"
+        "Fanlar bo‘yicha AI dan yordam olish.\n\n"
+        "⚙️ Admin\n"
+        "Faqat administrator uchun.",
         parse_mode="HTML",
-        reply_markup=(
-            admin_menu()
-            if is_admin(update.effective_user.id)
-            else main_menu()
-        )
+        reply_markup=keyboard
     )
 
 
-# =========================================================
-# MATN HANDLER
-# =========================================================
+# ============================================================
+# ASOSIY TEXT HANDLER
+# ============================================================
 
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def text_handler(update, context):
 
-    if not update.message or not update.message.text:
+    if not update.message:
         return
 
-    text = update.message.text
+    text = update.message.text.strip()
     user_id = update.effective_user.id
-    mode = context.user_data.get("mode")
 
-    # -------------------------
+    state = context.user_data.get(
+        "state"
+    )
+
+    # --------------------------------------------------------
     # ORQAGA
-    # -------------------------
+    # --------------------------------------------------------
 
     if text == "⬅️ Orqaga":
 
         context.user_data.clear()
 
+        keyboard = (
+            admin_keyboard()
+            if is_admin(user_id)
+            else main_keyboard()
+        )
+
         await update.message.reply_text(
-            "🏠 Bosh menyu:",
-            reply_markup=(
-                admin_menu()
-                if is_admin(user_id)
-                else main_menu()
-            )
+            "🏠 <b>Asosiy menyu</b>",
+            parse_mode="HTML",
+            reply_markup=keyboard
         )
 
         return
 
-    # -------------------------
-    # ASOSIY MENU
-    # -------------------------
+    # --------------------------------------------------------
+    # ASOSIY TUGMALAR
+    # --------------------------------------------------------
 
     if text == "📚 Dars jadvali":
-        await show_schedule(update, context)
+
+        await schedule_menu(
+            update,
+            context
+        )
+
         return
 
     if text == "📝 Uyga vazifa":
-        await show_homework(update, context)
+
+        await homework_menu(
+            update,
+            context
+        )
+
         return
 
     if text == "📢 E'lonlar":
-        await show_announcements(update, context)
+
+        await announcements(
+            update,
+            context
+        )
+
         return
 
     if text == "🎉 Tadbirlar":
-        await show_events(update, context)
+
+        await events(
+            update,
+            context
+        )
+
         return
 
     if text == "🤖 AI yordamchi":
-        await ai_mode(update, context)
+
+        await ai_menu(
+            update,
+            context
+        )
+
         return
 
     if text == "ℹ️ Yordam":
-        await help_command(update, context)
+
+        await help_command(
+            update,
+            context
+        )
+
         return
 
-    # -------------------------
-    # ADMIN
-    # -------------------------
+    # --------------------------------------------------------
+    # ADMIN MENU
+    # --------------------------------------------------------
 
     if text == "⚙️ Admin":
 
-        if is_admin(user_id):
-            await admin_panel(update, context)
+        await admin_menu(
+            update,
+            context
+        )
 
         return
 
     if text == "➕ Jadval qo‘shish":
 
-        if is_admin(user_id):
-            await add_schedule_start(update, context)
+        await add_schedule(
+            update,
+            context
+        )
 
         return
 
     if text == "➕ Uyga vazifa qo‘shish":
 
-        if is_admin(user_id):
-            await add_homework_start(update, context)
+        await add_homework(
+            update,
+            context
+        )
 
         return
 
     if text == "➕ E'lon qo‘shish":
 
-        if is_admin(user_id):
-            await add_announcement_start(update, context)
+        await add_announcement(
+            update,
+            context
+        )
 
         return
 
     if text == "➕ Tadbir qo‘shish":
 
-        if is_admin(user_id):
-            await add_event_start(update, context)
+        await add_event(
+            update,
+            context
+        )
 
         return
 
     if text == "🗑 Ma'lumotlarni tozalash":
 
-        if is_admin(user_id):
-            await clear_data(update, context)
+        await clear_menu(
+            update,
+            context
+        )
 
         return
 
-    # -------------------------
-    # CLEAR
-    # -------------------------
+    # --------------------------------------------------------
+    # STATE
+    # --------------------------------------------------------
 
-    if mode == "clear_menu":
+    if state == "choose_schedule_grade":
 
-        await clear_selected(update, context)
+        await show_schedule(
+            update,
+            context
+        )
+
         return
 
-    # -------------------------
-    # SCHEDULE
-    # -------------------------
+    if state == "choose_homework_grade":
 
-    if mode == "schedule_grade":
+        await show_homework(
+            update,
+            context
+        )
 
-        await show_grade_schedule(update, context)
         return
 
-    # -------------------------
-    # HOMEWORK
-    # -------------------------
+    if state == "add_schedule":
 
-    if mode == "homework_grade":
+        await save_schedule(
+            update,
+            context
+        )
 
-        await show_grade_homework(update, context)
         return
 
-    # -------------------------
-    # ADMIN SCHEDULE
-    # -------------------------
+    if state == "add_homework":
 
-    if mode == "add_schedule":
+        await save_homework(
+            update,
+            context
+        )
 
-        await save_schedule(update, context)
         return
 
-    # -------------------------
-    # ADMIN HOMEWORK
-    # -------------------------
+    if state == "add_announcement":
 
-    if mode == "add_homework":
+        await save_announcement(
+            update,
+            context
+        )
 
-        await save_homework(update, context)
         return
 
-    # -------------------------
-    # ADMIN ANNOUNCEMENT
-    # -------------------------
+    if state == "add_event":
 
-    if mode == "add_announcement":
+        await save_event(
+            update,
+            context
+        )
 
-        await save_announcement(update, context)
         return
 
-    # -------------------------
-    # ADMIN EVENT
-    # -------------------------
+    if state == "clear":
 
-    if mode == "add_event":
+        await clear_data(
+            update,
+            context
+        )
 
-        await save_event(update, context)
         return
 
-    # -------------------------
+    # --------------------------------------------------------
     # AI
-    # -------------------------
+    # --------------------------------------------------------
 
-    if mode == "ai":
+    if state == "ai":
 
-        await update.message.chat.send_action("typing")
+        await update.message.reply_text(
+            "🤖 O‘ylayapman...",
+        )
 
         answer = await ask_ai(text)
 
-        # Telegram xabari juda uzun bo'lsa bo'lib yuboramiz.
-        chunk_size = 4000
+        # Telegram 4096 belgidan katta xabarni qabul qilmaydi.
+        chunk_size = 3800
 
-        for i in range(0, len(answer), chunk_size):
+        for start in range(
+            0,
+            len(answer),
+            chunk_size
+        ):
 
             await update.message.reply_text(
-                answer[i:i + chunk_size]
+                answer[
+                    start:start + chunk_size
+                ]
             )
 
         return
 
-    # -------------------------
-    # DEFAULT
-    # -------------------------
+    # --------------------------------------------------------
+    # TUSHUNILMAGAN BUYRUQ
+    # --------------------------------------------------------
+
+    keyboard = (
+        admin_keyboard()
+        if is_admin(user_id)
+        else main_keyboard()
+    )
 
     await update.message.reply_text(
-        "Tushunmadim 🙂\n\n"
-        "Menyudagi tugmalardan birini tanlang.",
-        reply_markup=(
-            admin_menu()
-            if is_admin(user_id)
-            else main_menu()
-        )
+        "🙂 Buyruqni tushunmadim.\n\n"
+        "Menyudagi tugmalardan foydalaning.",
+        reply_markup=keyboard
     )
 
 
-# =========================================================
-# ERROR
-# =========================================================
+# ============================================================
+# ERROR HANDLER
+# ============================================================
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+async def error_handler(update, context):
 
-    logger.exception(
-        "Botda xatolik:",
-        exc_info=context.error
+    logger.error(
+        "Bot xatosi: %s",
+        context.error,
+        exc_info=True
     )
 
 
-# =========================================================
+# ============================================================
 # MAIN
-# =========================================================
+# ============================================================
 
 def main():
 
-    if not TOKEN:
+    if not BOT_TOKEN:
 
         raise RuntimeError(
-            "BOT_TOKEN topilmadi. Render Environment Variables "
-            "bo‘limiga BOT_TOKEN qo‘shing."
+            "BOT_TOKEN topilmadi!"
         )
 
-    init_db()
+    create_database()
 
     application = (
         Application.builder()
-        .token(TOKEN)
+        .token(BOT_TOKEN)
         .build()
     )
 
     application.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start
+        )
     )
 
     application.add_handler(
-        CommandHandler("help", help_command)
+        CommandHandler(
+            "help",
+            help_command
+        )
     )
 
     application.add_handler(
@@ -1117,14 +1282,22 @@ def main():
         )
     )
 
-    application.add_error_handler(error_handler)
+    application.add_error_handler(
+        error_handler
+    )
 
-    logger.info("🏫 Maktab 57 bot ishga tushdi!")
+    logger.info(
+        "🏫 Maktab 57 bot ishga tushdi!"
+    )
 
     application.run_polling(
         drop_pending_updates=True
     )
 
+
+# ============================================================
+# ISHGA TUSHIRISH
+# ============================================================
 
 if __name__ == "__main__":
     main()
