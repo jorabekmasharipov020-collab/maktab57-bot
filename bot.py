@@ -505,4 +505,3 @@ if __name__ == "__main__":
 
     # Telegram botni ishga tushirish
     main()
-```
