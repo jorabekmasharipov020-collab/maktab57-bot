@@ -1,30 +1,50 @@
+```python
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-TOKEN = "8987242329:AAE__C8u4VqomL6YwHkF7Zvg4oolM0GVzrQ"
+import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+# =========================
+# BOT TOKEN
+# =========================
+TOKEN = os.getenv("BOT_TOKEN")
+
+if not TOKEN:
+    raise ValueError("BOT_TOKEN Render Environment Variables'da topilmadi!")
 
 
 # =========================
 # START
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     keyboard = [
-        [InlineKeyboardButton("1️⃣ 1-sinf", callback_data="1"),
-         InlineKeyboardButton("2️⃣ 2-sinf", callback_data="2")],
-
-        [InlineKeyboardButton("3️⃣ 3-sinf", callback_data="3"),
-         InlineKeyboardButton("4️⃣ 4-sinf", callback_data="4")],
-
-        [InlineKeyboardButton("5️⃣ 5-sinf", callback_data="5"),
-         InlineKeyboardButton("6️⃣ 6-sinf", callback_data="6")],
-
-        [InlineKeyboardButton("7️⃣ 7-sinf", callback_data="7"),
-         InlineKeyboardButton("8️⃣ 8-sinf", callback_data="8")],
-
-        [InlineKeyboardButton("9️⃣ 9-sinf", callback_data="9"),
-         InlineKeyboardButton("🔟 10-sinf", callback_data="10")],
-
-        [InlineKeyboardButton("1️⃣1️⃣ 11-sinf", callback_data="11")]
+        [
+            InlineKeyboardButton("1️⃣ 1-sinf", callback_data="1"),
+            InlineKeyboardButton("2️⃣ 2-sinf", callback_data="2")
+        ],
+        [
+            InlineKeyboardButton("3️⃣ 3-sinf", callback_data="3"),
+            InlineKeyboardButton("4️⃣ 4-sinf", callback_data="4")
+        ],
+        [
+            InlineKeyboardButton("5️⃣ 5-sinf", callback_data="5"),
+            InlineKeyboardButton("6️⃣ 6-sinf", callback_data="6")
+        ],
+        [
+            InlineKeyboardButton("7️⃣ 7-sinf", callback_data="7"),
+            InlineKeyboardButton("8️⃣ 8-sinf", callback_data="8")
+        ],
+        [
+            InlineKeyboardButton("9️⃣ 9-sinf", callback_data="9"),
+            InlineKeyboardButton("🔟 10-sinf", callback_data="10")
+        ],
+        [
+            InlineKeyboardButton("1️⃣1️⃣ 11-sinf", callback_data="11")
+        ]
     ]
 
     await update.message.reply_text(
@@ -38,36 +58,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # SINF TANLASH
 # =========================
 async def class_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
     await query.answer()
 
     sinf = query.data
 
     keyboard = [
-        [InlineKeyboardButton(
-            "📚 Dars jadvali",
-            callback_data=f"dars_{sinf}"
-        )],
-
-        [InlineKeyboardButton(
-            "📝 Uy vazifasi",
-            callback_data=f"vazifa_{sinf}"
-        )],
-
-        [InlineKeyboardButton(
-            "📢 E'lonlar",
-            callback_data="elonlar"
-        )],
-
-        [InlineKeyboardButton(
-            "📅 Tadbirlar",
-            callback_data="tadbirlar"
-        )],
-
-        [InlineKeyboardButton(
-            "🔄 Sinfni almashtirish",
-            callback_data="change"
-        )]
+        [
+            InlineKeyboardButton(
+                "📚 Dars jadvali",
+                callback_data=f"dars_{sinf}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏆 To‘garaklar",
+                callback_data=f"togarak_{sinf}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔄 Sinfni almashtirish",
+                callback_data="change"
+            )
+        ]
     ]
 
     await query.edit_message_text(
@@ -81,13 +96,14 @@ async def class_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # DARS JADVALI
 # =========================
 async def dars_jadvali(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
     await query.answer()
 
     sinf = query.data.replace("dars_", "")
 
-    # Hozircha faqat 11-sinf
     if sinf == "11":
+
         keyboard = [
             [InlineKeyboardButton("📅 Dushanba", callback_data="kun_dushanba")],
             [InlineKeyboardButton("📅 Seshanba", callback_data="kun_seshanba")],
@@ -105,16 +121,28 @@ async def dars_jadvali(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     else:
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "⬅️ Orqaga",
+                    callback_data=f"orqaga_{sinf}"
+                )
+            ]
+        ]
+
         await query.edit_message_text(
             f"📚 {sinf}-sinf dars jadvali\n\n"
-            "⏳ Bu sinf uchun jadval hali qo‘shilmagan."
+            "⏳ Bu sinf uchun jadval hali qo‘shilmagan.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
 
 # =========================
-# KUNLAR VA FANLAR
+# 11-SINF DARS JADVALI
 # =========================
 JADVAL = {
+
     "kun_dushanba": (
         "📅 DUSHANBA\n\n"
         "1. Sinf soati\n"
@@ -174,24 +202,31 @@ JADVAL = {
 
 
 # =========================
-# KUN BOSILGANDA
+# KUN TANLANGANDA
 # =========================
 async def kun_tanlandi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
     await query.answer()
 
-    matn = JADVAL.get(query.data)
+    matn = JADVAL.get(
+        query.data,
+        "❌ Bu kun uchun jadval topilmadi."
+    )
 
     keyboard = [
-        [InlineKeyboardButton(
-            "⬅️ Kunlarga qaytish",
-            callback_data="dars_11"
-        )],
-
-        [InlineKeyboardButton(
-            "🏠 Bosh menyu",
-            callback_data="home"
-        )]
+        [
+            InlineKeyboardButton(
+                "⬅️ Kunlarga qaytish",
+                callback_data="dars_11"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏠 Bosh menyu",
+                callback_data="home"
+            )
+        ]
     ]
 
     await query.edit_message_text(
@@ -201,36 +236,202 @@ async def kun_tanlandi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
-# ORQAGA
+# TO‘GARAKLAR
 # =========================
-async def back_to_class(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def togaraklar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
     await query.answer()
 
+    sinf = query.data.replace("togarak_", "")
+
     keyboard = [
-        [InlineKeyboardButton("📚 Dars jadvali", callback_data="dars_11")],
-        [InlineKeyboardButton("📝 Uy vazifasi", callback_data="vazifa_11")],
-        [InlineKeyboardButton("📢 E'lonlar", callback_data="elonlar")],
-        [InlineKeyboardButton("📅 Tadbirlar", callback_data="tadbirlar")],
-        [InlineKeyboardButton("🔄 Sinfni almashtirish", callback_data="change")]
+        [
+            InlineKeyboardButton(
+                "⬅️ Orqaga",
+                callback_data=f"orqaga_{sinf}"
+            )
+        ]
     ]
 
     await query.edit_message_text(
-        "✅ Siz 11-sinfni tanladingiz!\n\n"
+        f"🏆 {sinf}-SINF TO‘GARAKLARI\n\n"
+        "⏳ To‘garaklar ma’lumotlari tez orada qo‘shiladi.\n\n"
+        "Bu bo‘limga to‘garak nomi,\n"
+        "hafta kuni va vaqti kiritiladi.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+# =========================
+# SINF MENYUSIGA QAYTISH
+# =========================
+async def back_to_class(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    sinf = query.data.replace("orqaga_", "")
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "📚 Dars jadvali",
+                callback_data=f"dars_{sinf}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏆 To‘garaklar",
+                callback_data=f"togarak_{sinf}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔄 Sinfni almashtirish",
+                callback_data="change"
+            )
+        ]
+    ]
+
+    await query.edit_message_text(
+        f"✅ Siz {sinf}-sinfni tanladingiz!\n\n"
         "Kerakli bo‘limni tanlang:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
 # =========================
+# SINFNI ALMASHTIRISH
+# =========================
+async def change_class(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    keyboard = [
+        [
+            InlineKeyboardButton("1️⃣ 1-sinf", callback_data="1"),
+            InlineKeyboardButton("2️⃣ 2-sinf", callback_data="2")
+        ],
+        [
+            InlineKeyboardButton("3️⃣ 3-sinf", callback_data="3"),
+            InlineKeyboardButton("4️⃣ 4-sinf", callback_data="4")
+        ],
+        [
+            InlineKeyboardButton("5️⃣ 5-sinf", callback_data="5"),
+            InlineKeyboardButton("6️⃣ 6-sinf", callback_data="6")
+        ],
+        [
+            InlineKeyboardButton("7️⃣ 7-sinf", callback_data="7"),
+            InlineKeyboardButton("8️⃣ 8-sinf", callback_data="8")
+        ],
+        [
+            InlineKeyboardButton("9️⃣ 9-sinf", callback_data="9"),
+            InlineKeyboardButton("🔟 10-sinf", callback_data="10")
+        ],
+        [
+            InlineKeyboardButton("1️⃣1️⃣ 11-sinf", callback_data="11")
+        ]
+    ]
+
+    await query.edit_message_text(
+        "🏫 Sinfingizni tanlang:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+# =========================
+# BOSH MENYU
+# =========================
+async def home(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    keyboard = [
+        [
+            InlineKeyboardButton("1️⃣ 1-sinf", callback_data="1"),
+            InlineKeyboardButton("2️⃣ 2-sinf", callback_data="2")
+        ],
+        [
+            InlineKeyboardButton("3️⃣ 3-sinf", callback_data="3"),
+            InlineKeyboardButton("4️⃣ 4-sinf", callback_data="4")
+        ],
+        [
+            InlineKeyboardButton("5️⃣ 5-sinf", callback_data="5"),
+            InlineKeyboardButton("6️⃣ 6-sinf", callback_data="6")
+        ],
+        [
+            InlineKeyboardButton("7️⃣ 7-sinf", callback_data="7"),
+            InlineKeyboardButton("8️⃣ 8-sinf", callback_data="8")
+        ],
+        [
+            InlineKeyboardButton("9️⃣ 9-sinf", callback_data="9"),
+            InlineKeyboardButton("🔟 10-sinf", callback_data="10")
+        ],
+        [
+            InlineKeyboardButton("1️⃣1️⃣ 11-sinf", callback_data="11")
+        ]
+    ]
+
+    await query.edit_message_text(
+        "🏫 Maktab 57 botiga xush kelibsiz!\n\n"
+        "Sinfingizni tanlang:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+# =========================
+# RENDER PORT SERVER
+# =========================
+class HealthHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+
+        self.send_response(200)
+        self.end_headers()
+
+        self.wfile.write(
+            b"Bot is running"
+        )
+
+    def log_message(self, format, *args):
+        pass
+
+
+def run_server():
+
+    port = int(
+        os.environ.get("PORT", 10000)
+    )
+
+    server = HTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler
+    )
+
+    print(f"Server {port}-portda ishga tushdi!")
+
+    server.serve_forever()
+
+
+# =========================
 # ASOSIY DASTUR
 # =========================
 def main():
+
     app = Application.builder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
+    # START
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start
+        )
+    )
 
-    # Sinf tanlash
+    # SINF TANLASH
     app.add_handler(
         CallbackQueryHandler(
             class_selected,
@@ -238,7 +439,7 @@ def main():
         )
     )
 
-    # Dars jadvali tugmasi
+    # DARS JADVALI
     app.add_handler(
         CallbackQueryHandler(
             dars_jadvali,
@@ -246,7 +447,7 @@ def main():
         )
     )
 
-    # Haftaning kunlari
+    # HAFTA KUNLARI
     app.add_handler(
         CallbackQueryHandler(
             kun_tanlandi,
@@ -254,17 +455,54 @@ def main():
         )
     )
 
-    # Orqaga
+    # TO‘GARAKLAR
+    app.add_handler(
+        CallbackQueryHandler(
+            togaraklar,
+            pattern=r"^togarak_"
+        )
+    )
+
+    # ORQAGA
     app.add_handler(
         CallbackQueryHandler(
             back_to_class,
-            pattern=r"^orqaga_11$"
+            pattern=r"^orqaga_"
+        )
+    )
+
+    # SINFNI ALMASHTIRISH
+    app.add_handler(
+        CallbackQueryHandler(
+            change_class,
+            pattern=r"^change$"
+        )
+    )
+
+    # BOSH MENYU
+    app.add_handler(
+        CallbackQueryHandler(
+            home,
+            pattern=r"^home$"
         )
     )
 
     print("Bot ishga tushdi!")
+
     app.run_polling()
 
 
+# =========================
+# ISHGA TUSHIRISH
+# =========================
 if __name__ == "__main__":
+
+    # Render portini ochish
+    threading.Thread(
+        target=run_server,
+        daemon=True
+    ).start()
+
+    # Telegram botni ishga tushirish
     main()
+```
