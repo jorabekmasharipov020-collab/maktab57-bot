@@ -1,8 +1,9 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 import os
 import threading
+import random
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
@@ -89,6 +90,12 @@ async def class_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton(
                 "🌐 Kundalik.com",
                 url="https://kundalik.com"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🎯 Sonni top",
+                callback_data="game_start"
             )
         ],
         [
@@ -313,6 +320,12 @@ async def back_to_class(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton(
+                "🎯 Sonni top",
+                callback_data="game_start"
+            )
+        ],
+        [
+            InlineKeyboardButton(
                 "🔄 Sinfni almashtirish",
                 callback_data="change"
             )
@@ -354,6 +367,104 @@ async def home(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🏫 Maktab 57 botiga xush kelibsiz!\n\n"
         "Sinfingizni tanlang:",
         reply_markup=InlineKeyboardMarkup(sinflar_menyusi())
+    )
+
+
+# =========================
+# 🎯 SONNI TOP O‘YINI
+# =========================
+
+async def game_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    son = random.randint(1, 100)
+
+    context.user_data["game_number"] = son
+    context.user_data["game_attempts"] = 0
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "❌ O‘yinni to‘xtatish",
+                callback_data="game_stop"
+            )
+        ]
+    ]
+
+    await query.edit_message_text(
+        "🎯 SONNI TOP O‘YINI\n\n"
+        "Men 1 dan 100 gacha bo‘lgan bitta son o‘yladim. 🤫\n\n"
+        "Sonni yozib yuboring! 👇",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def game_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if "game_number" not in context.user_data:
+        return
+
+    text = update.message.text.strip()
+
+    if not text.isdigit():
+        await update.message.reply_text(
+            "❗ Iltimos, 1 dan 100 gacha bo‘lgan son yozing."
+        )
+        return
+
+    taxmin = int(text)
+
+    if taxmin < 1 or taxmin > 100:
+        await update.message.reply_text(
+            "❗ Son 1 dan 100 gacha bo‘lishi kerak."
+        )
+        return
+
+    context.user_data["game_attempts"] += 1
+
+    son = context.user_data["game_number"]
+    urinish = context.user_data["game_attempts"]
+
+    if taxmin < son:
+
+        await update.message.reply_text(
+            f"🔼 Men o‘ylagan son bundan KATTA!\n\n"
+            f"🎯 Urinish: {urinish}"
+        )
+
+    elif taxmin > son:
+
+        await update.message.reply_text(
+            f"🔽 Men o‘ylagan son bundan KICHIK!\n\n"
+            f"🎯 Urinish: {urinish}"
+        )
+
+    else:
+
+        await update.message.reply_text(
+            f"🎉 TABRIKLAYMAN!\n\n"
+            f"To‘g‘ri topdingiz! 🥳\n"
+            f"🔢 Son: {son}\n"
+            f"🎯 Urinishlar: {urinish}"
+        )
+
+        del context.user_data["game_number"]
+        del context.user_data["game_attempts"]
+
+
+async def game_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    context.user_data.pop("game_number", None)
+    context.user_data.pop("game_attempts", None)
+
+    await query.edit_message_text(
+        "❌ O‘yin to‘xtatildi.\n\n"
+        "🎯 Yana o‘ynash uchun /start bosing."
     )
 
 
@@ -455,6 +566,28 @@ def main():
         CallbackQueryHandler(
             home,
             pattern=r"^home$"
+        )
+    )
+
+    # 🎯 O‘YIN HANDLERLARI
+    app.add_handler(
+        CallbackQueryHandler(
+            game_start,
+            pattern=r"^game_start$"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            game_stop,
+            pattern=r"^game_stop$"
+        )
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            game_message
         )
     )
 
