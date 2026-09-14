@@ -4,6 +4,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 import os
 import threading
 import random
+import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
@@ -18,10 +19,185 @@ if not TOKEN:
 
 
 # =========================
+# MA'LUMOTLAR BAZASI
+# =========================
+
+DB_NAME = "maktab57.db"
+
+
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            sinf TEXT NOT NULL,
+            score INTEGER DEFAULT 0
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def get_user(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT user_id, name, sinf, score FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+
+    user = cursor.fetchone()
+    conn.close()
+
+    return user
+
+
+def register_user(user_id, name, sinf):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO users (user_id, name, sinf, score)
+        VALUES (
+            ?,
+            ?,
+            ?,
+            COALESCE((SELECT score FROM users WHERE user_id = ?), 0)
+        )
+        """,
+        (user_id, name, sinf, user_id)
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def add_score(user_id, points):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "UPDATE users SET score = score + ? WHERE user_id = ?",
+        (points, user_id)
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_rating():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT name, sinf, score FROM users ORDER BY score DESC, name ASC LIMIT 10"
+    )
+
+    rating = cursor.fetchall()
+    conn.close()
+
+    return rating
+
+
+def menu_keyboard(sinf):
+    return [
+        [
+            InlineKeyboardButton(
+                "📚 Dars jadvali",
+                callback_data=f"dars_{sinf}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏆 To‘garaklar",
+                callback_data=f"togarak_{sinf}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🌐 Kundalik.com",
+                url="https://kundalik.com"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🎯 Sonni top",
+                callback_data="game_start"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏆 Reyting",
+                callback_data="rating"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔄 Sinfni almashtirish",
+                callback_data="change"
+            )
+        ]
+    ]
+
+
+async def show_main_menu(query, sinf):
+    await query.edit_message_text(
+        f"✅ Siz {sinf}-sinfni tanladingiz!\n\n"
+        "Kerakli bo‘limni tanlang:",
+        reply_markup=InlineKeyboardMarkup(menu_keyboard(sinf))
+    )
+
+
+# =========================
+# RO‘YXATDAN O‘TISH
+# =========================
+
+async def ask_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    context.user_data["registration"] = True
+
+    await update.message.reply_text(
+        "📝 Ro‘yxatdan o‘tish\n\n"
+        "👤 Ismingizni yozing:"
+    )
+
+
+async def registration_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not context.user_data.get("registration"):
+        return
+
+    name = update.message.text.strip()
+
+    if not name:
+        await update.message.reply_text(
+            "❗ Ismingizni yozing."
+        )
+        return
+
+    context.user_data["registration_name"] = name
+    context.user_data["registration"] = False
+    context.user_data["registration_class"] = True
+
+    await update.message.reply_text(
+        f"✅ Ism saqlandi: {name}\n\n"
+        "🏫 Endi sinfingizni tanlang:",
+        reply_markup=InlineKeyboardMarkup(sinflar_menyusi())
+    )
+
+
+# =========================
 # SINFLAR MENYUSI
 # =========================
 
 def sinflar_menyusi():
+
     return [
         [
             InlineKeyboardButton("1️⃣ 1-sinf", callback_data="1"),
@@ -55,11 +231,26 @@ def sinflar_menyusi():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    await update.message.reply_text(
-        "🏫 Maktab 57 botiga xush kelibsiz!\n\n"
-        "Sinfingizni tanlang:",
-        reply_markup=InlineKeyboardMarkup(sinflar_menyusi())
-    )
+    user_id = update.effective_user.id
+    user = get_user(user_id)
+
+    if user:
+
+        context.user_data["registration_name"] = user[1]
+        context.user_data["registration_class"] = user[2]
+
+        await update.message.reply_text(
+            f"🏫 Maktab 57 botiga xush kelibsiz, {user[1]}!\n\n"
+            f"🏫 Sinfingiz: {user[2]}-sinf\n\n"
+            "Kerakli bo‘limni tanlang:",
+            reply_markup=InlineKeyboardMarkup(
+                menu_keyboard(user[2])
+            )
+        )
+
+        return
+
+    await ask_name(update, context)
 
 
 # =========================
@@ -73,44 +264,35 @@ async def class_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sinf = query.data
 
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "📚 Dars jadvali",
-                callback_data=f"dars_{sinf}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🏆 To‘garaklar",
-                callback_data=f"togarak_{sinf}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🌐 Kundalik.com",
-                url="https://kundalik.com"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🎯 Sonni top",
-                callback_data="game_start"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔄 Sinfni almashtirish",
-                callback_data="change"
-            )
-        ]
-    ]
+    if context.user_data.get("registration_class"):
 
-    await query.edit_message_text(
-        f"✅ Siz {sinf}-sinfni tanladingiz!\n\n"
-        "Kerakli bo‘limni tanlang:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+        name = context.user_data.get(
+            "registration_name",
+            update.effective_user.first_name
+        )
+
+        register_user(
+            update.effective_user.id,
+            name,
+            sinf
+        )
+
+        context.user_data["registration_class"] = False
+        context.user_data["registration_name"] = name
+
+        await query.edit_message_text(
+            f"🎉 Ro‘yxatdan muvaffaqiyatli o‘tdingiz!\n\n"
+            f"👤 Ism: {name}\n"
+            f"🏫 Sinf: {sinf}-sinf\n\n"
+            "Endi botdan foydalanishingiz mumkin.",
+            reply_markup=InlineKeyboardMarkup(
+                menu_keyboard(sinf)
+            )
+        )
+
+        return
+
+    await show_main_menu(query, sinf)
 
 
 # =========================
@@ -127,13 +309,48 @@ async def dars_jadvali(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sinf == "11":
 
         keyboard = [
-            [InlineKeyboardButton("📅 Dushanba", callback_data="kun_dushanba")],
-            [InlineKeyboardButton("📅 Seshanba", callback_data="kun_seshanba")],
-            [InlineKeyboardButton("📅 Chorshanba", callback_data="kun_chorshanba")],
-            [InlineKeyboardButton("📅 Payshanba", callback_data="kun_payshanba")],
-            [InlineKeyboardButton("📅 Juma", callback_data="kun_juma")],
-            [InlineKeyboardButton("📅 Shanba", callback_data="kun_shanba")],
-            [InlineKeyboardButton("⬅️ Orqaga", callback_data="orqaga_11")]
+            [
+                InlineKeyboardButton(
+                    "📅 Dushanba",
+                    callback_data="kun_dushanba"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📅 Seshanba",
+                    callback_data="kun_seshanba"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📅 Chorshanba",
+                    callback_data="kun_chorshanba"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📅 Payshanba",
+                    callback_data="kun_payshanba"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📅 Juma",
+                    callback_data="kun_juma"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📅 Shanba",
+                    callback_data="kun_shanba"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅️ Orqaga",
+                    callback_data="orqaga_11"
+                )
+            ]
         ]
 
         await query.edit_message_text(
@@ -299,44 +516,7 @@ async def back_to_class(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sinf = query.data.replace("orqaga_", "")
 
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "📚 Dars jadvali",
-                callback_data=f"dars_{sinf}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🏆 To‘garaklar",
-                callback_data=f"togarak_{sinf}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🌐 Kundalik.com",
-                url="https://kundalik.com"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🎯 Sonni top",
-                callback_data="game_start"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔄 Sinfni almashtirish",
-                callback_data="change"
-            )
-        ]
-    ]
-
-    await query.edit_message_text(
-        f"✅ Siz {sinf}-sinfni tanladingiz!\n\n"
-        "Kerakli bo‘limni tanlang:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await show_main_menu(query, sinf)
 
 
 # =========================
@@ -350,7 +530,9 @@ async def change_class(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         "🏫 Sinfingizni tanlang:",
-        reply_markup=InlineKeyboardMarkup(sinflar_menyusi())
+        reply_markup=InlineKeyboardMarkup(
+            sinflar_menyusi()
+        )
     )
 
 
@@ -366,7 +548,9 @@ async def home(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         "🏫 Maktab 57 botiga xush kelibsiz!\n\n"
         "Sinfingizni tanlang:",
-        reply_markup=InlineKeyboardMarkup(sinflar_menyusi())
+        reply_markup=InlineKeyboardMarkup(
+            sinflar_menyusi()
+        )
     )
 
 
@@ -409,17 +593,21 @@ async def game_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     if not text.isdigit():
+
         await update.message.reply_text(
             "❗ Iltimos, 1 dan 100 gacha bo‘lgan son yozing."
         )
+
         return
 
     taxmin = int(text)
 
     if taxmin < 1 or taxmin > 100:
+
         await update.message.reply_text(
             "❗ Son 1 dan 100 gacha bo‘lishi kerak."
         )
+
         return
 
     context.user_data["game_attempts"] += 1
@@ -443,11 +631,27 @@ async def game_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     else:
 
+        if urinish <= 3:
+            points = 30
+        elif urinish <= 6:
+            points = 20
+        elif urinish <= 10:
+            points = 10
+        else:
+            points = 5
+
+        add_score(
+            update.effective_user.id,
+            points
+        )
+
         await update.message.reply_text(
             f"🎉 TABRIKLAYMAN!\n\n"
             f"To‘g‘ri topdingiz! 🥳\n"
             f"🔢 Son: {son}\n"
-            f"🎯 Urinishlar: {urinish}"
+            f"🎯 Urinishlar: {urinish}\n"
+            f"⭐ Sizga +{points} ball berildi!\n\n"
+            "🏆 Reytingni ko‘rish uchun /start bosing."
         )
 
         del context.user_data["game_number"]
@@ -459,12 +663,88 @@ async def game_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    context.user_data.pop("game_number", None)
-    context.user_data.pop("game_attempts", None)
+    context.user_data.pop(
+        "game_number",
+        None
+    )
+
+    context.user_data.pop(
+        "game_attempts",
+        None
+    )
 
     await query.edit_message_text(
         "❌ O‘yin to‘xtatildi.\n\n"
         "🎯 Yana o‘ynash uchun /start bosing."
+    )
+
+
+# =========================
+# 🏆 REYTING
+# =========================
+
+async def rating(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    rows = get_rating()
+
+    if not rows:
+
+        matn = (
+            "🏆 REYTING\n\n"
+            "Hozircha reytingda hech kim yo‘q."
+        )
+
+    else:
+
+        lines = [
+            "🏆 REYTING — TOP 10\n"
+        ]
+
+        medals = [
+            "🥇",
+            "🥈",
+            "🥉"
+        ]
+
+        for i, row in enumerate(rows, start=1):
+
+            name, sinf, score = row
+
+            belgi = (
+                medals[i - 1]
+                if i <= 3
+                else f"{i}️⃣"
+            )
+
+            lines.append(
+                f"{belgi} {name} — {score} ball ({sinf}-sinf)"
+            )
+
+        matn = "\n".join(lines)
+
+    user = get_user(
+        update.effective_user.id
+    )
+
+    keyboard = []
+
+    if user:
+
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "⬅️ Orqaga",
+                    callback_data=f"orqaga_{user[2]}"
+                )
+            ]
+        )
+
+    await query.edit_message_text(
+        matn,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
@@ -490,7 +770,10 @@ class HealthHandler(BaseHTTPRequestHandler):
 def run_server():
 
     port = int(
-        os.environ.get("PORT", 10000)
+        os.environ.get(
+            "PORT",
+            10000
+        )
     )
 
     server = HTTPServer(
@@ -510,6 +793,8 @@ def run_server():
 # =========================
 
 def main():
+
+    init_db()
 
     app = Application.builder().token(TOKEN).build()
 
@@ -569,7 +854,22 @@ def main():
         )
     )
 
+    app.add_handler(
+        CallbackQueryHandler(
+            rating,
+            pattern=r"^rating$"
+        )
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            registration_name
+        )
+    )
+
     # 🎯 O‘YIN HANDLERLARI
+
     app.add_handler(
         CallbackQueryHandler(
             game_start,
