@@ -749,6 +749,23 @@ async def rating(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================
+# MATN XABARLARINI YO‘NALTIRISH
+# =========================
+
+async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    # Avval ro‘yxatdan o‘tish jarayonini tekshiramiz
+    if context.user_data.get("registration"):
+        await registration_name(update, context)
+        return
+
+    # Keyin Sonni top o‘yinini tekshiramiz
+    if "game_number" in context.user_data:
+        await game_message(update, context)
+        return
+
+
+# =========================
 # RENDER PORT SERVER
 # =========================
 
@@ -861,13 +878,6 @@ def main():
         )
     )
 
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            registration_name
-        )
-    )
-
     # 🎯 O‘YIN HANDLERLARI
 
     app.add_handler(
@@ -884,10 +894,11 @@ def main():
         )
     )
 
+    # Ro‘yxatdan o‘tish va o‘yin uchun BITTA matn handler
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            game_message
+            text_message
         )
     )
 
